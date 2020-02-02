@@ -23,15 +23,19 @@
  *
  */
 
-#include <odroid_go.h>
 #include <MirrorGo.h>
+
+#ifndef MirrorGo_h
+#include <odroid_go.h>
+#define MG GO
+#else
+#ifndef ESP32
+#define GO MG
+#endif
+#endif
 
 //include <SPI.h>
 #include <MFRC522.h>
-
-#ifndef MirrorGo_h
-#define MG GO
-#endif
 
 #define DARK_ORANGE 0xFC08
 
@@ -41,6 +45,7 @@
 #define MENU_BG_COLOR      rgb565(96,128,208)
 #define MENU_HILIGHT_COLOR rgb565(255,128,40)
 #define MENU_TEXT_COLOR    WHITE
+#define ACTION_BG_COLOR    BLACK
 #define ACTION_TEXT_COLOR  WHITE
 #define STATUS_TEXT_COLOR  WHITE
 
@@ -518,6 +523,8 @@ bool sd_init() {
     Serial.println("Card Mount Failed");
     return false;
   }
+
+#ifdef ESP32
   uint8_t cardType = SD.cardType();
 
   if (cardType == CARD_NONE) {
@@ -544,6 +551,7 @@ bool sd_init() {
   uint64_t cardSize = SD.cardSize() / (1024 * 1024);
   Serial.printf("SD Card Size: %lluMB\n", cardSize);
   MG.lcd.printf("SD Card Size: %lluMB\n", cardSize);
+#endif //ESP32
 
   MG.lcd.println(" ");
   Serial.println();
@@ -599,12 +607,14 @@ void setup() {
         menuMax += 2;
     delay(100);
 
+#ifdef ESP32
     Serial.print("Setup: Check heap before RFID: ");
     if (heap_caps_check_integrity_all(true)) {
         Serial.println("OK");
     } else {
         Serial.println("Failed!");
     }
+#endif
 
     rfidOK = rfid_init();
 
@@ -626,12 +636,14 @@ void setup() {
     }
 #endif
 
+#ifdef ESP32
     Serial.print("Setup: Check heap before menu: ");
     if (heap_caps_check_integrity_all(true)) {
         Serial.println("OK");
     } else {
         Serial.println("Failed!");
     }
+#endif
 
     MG.lcd.setTextFont(1);
     MG.lcd.setTextSize(2);
@@ -816,7 +828,79 @@ bool waitForCard() {
         delay(50);
     }
 
+    MG.lcd.setCharCursor(0, 2);
+    MG.lcd.setTextColor(ACTION_TEXT_COLOR, ACTION_BG_COLOR);
+    MG.lcd.println("                      ");
+    MG.lcd.setTextColor(ACTION_TEXT_COLOR);
+
     return true;
+}
+
+bool waitForBack() {
+    MG.lcd.setCharCursor(0, 11);
+    MG.lcd.println("Press   Menu to go back");
+    go_lcd_drawMenuButton(MG.lcd.textWidth("Press ", 1),MG.lcd.fontHeight(1)*11);
+
+    while (actionWaitMS) {
+        MG.update();
+        
+        if (MG.BtnMenu.isPressed() == 1) {
+            actionWaitMS = 0;
+            return false;
+        }
+
+        delay(50);
+    }
+
+    return true;
+}
+
+void PICC_DumpDetailsToGO(MFRC522::Uid *uid  ///< Pointer to Uid struct returned from a successful PICC_Select().
+                  ) {
+    MG.lcd.print(F("Card UID:"));
+    go_dump_byte_array(uid->uidByte, uid->size);
+    MG.lcd.println("\n");
+  
+    // SAK
+    MG.lcd.print(F("Card SAK: "));
+    if(uid->sak < 0x10)
+      MG.lcd.print(F("0"));
+    MG.lcd.println(uid->sak, HEX);
+    MG.lcd.println("");
+
+    MG.lcd.println(F("PICC type: "));
+    MFRC522::PICC_Type piccType = mfrc522.PICC_GetType(uid->sak);
+    MG.lcd.println(mfrc522.PICC_GetTypeName(piccType));
+}
+
+void PICC_DumpSector0ToGO() {
+    MG.lcd.print(F("UID:"));
+    go_dump_byte_array(theUid, theUidSize);
+    MG.lcd.println("\n");
+    MG.lcd.print(F("BCC:"));
+    go_dump_byte_array(&theUid[theUidSize], 1);
+    MG.lcd.println("\n");
+    MG.lcd.println(F("Manufacturer Data:"));
+    if (theUidSize < 8) {
+      go_dump_byte_array(&theUid[theUidSize+1], 8);
+      MG.lcd.println("");
+      go_dump_byte_array(&theUid[theUidSize+1+8], 16-theUidSize-1-8);
+    } else {
+      go_dump_byte_array(&theUid[theUidSize+1], 16-theUidSize-1);
+    }
+    MG.lcd.println("\n");
+}
+
+void PICC_DumpSector0ToSerial() {
+    Serial.print(F("UID:"));
+    dump_byte_array(theUid, theUidSize);
+    Serial.println("\n");
+    Serial.print(F("BCC:"));
+    dump_byte_array(&theUid[theUidSize], 1);
+    Serial.println("\n");
+    Serial.print(F("Manufacturer Data:"));
+    dump_byte_array(&theUid[theUidSize+1], 16-theUidSize-1);
+    Serial.println("\n");
 }
 
 /*
@@ -985,19 +1069,9 @@ bool MIFARE_SetSector0(byte *newUid, byte uidSize, bool logErrors) {
 
 void keuze2(){ //Test waardes in blokken
 
-    MG.lcd.print(F("UID:"));
-    go_dump_byte_array(theUid, theUidSize);
-    MG.lcd.println("\n");
+    PICC_DumpSector0ToGO();
 
-    Serial.print(F("UID:"));
-    dump_byte_array(theUid, theUidSize);
-    Serial.println("\n");
-    Serial.print(F("BCC:"));
-    dump_byte_array(&theUid[theUidSize], 1);
-    Serial.println("\n");
-    Serial.print(F("Manufacturer Data:"));
-    dump_byte_array(&theUid[theUidSize+1], 16-theUidSize-1);
-    Serial.println("\n");
+    PICC_DumpSector0ToSerial();
   
     for(block = 4; block <= 62; block++){
         if(block == 3 || block == 7 || block == 11 || block == 15 || block == 19 || block == 23 || block == 27 || block == 31 || block == 35 || block == 39 || block == 43 || block == 47 || block == 51 || block == 55 || block == 59){
@@ -1030,17 +1104,9 @@ void keuze3(){ //Copy the data in the new card
     digitalWrite(LED_ACT_PIN, HIGH);
 #endif
 
-    MG.lcd.print(F("Card UID:"));
-    go_dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size);
-    MG.lcd.println("\n");
+    PICC_DumpDetailsToGO(&(mfrc522.uid));
 
-    // Show some details of the PICC (that is: the tag/card)
-    Serial.print(F("Card UID:"));
-    dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size);
-    Serial.println();
-    Serial.print(F("PICC type: "));
-    MFRC522::PICC_Type piccType = mfrc522.PICC_GetType(mfrc522.uid.sak);
-    Serial.println(mfrc522.PICC_GetTypeName(piccType));
+    mfrc522.PICC_DumpDetailsToSerial(&(mfrc522.uid));
     
     // Try the known default keys
     /*MFRC522::MIFARE_Key key;
@@ -1126,17 +1192,9 @@ void keuze1(){ //Read card
     digitalWrite(LED_ACT_PIN, HIGH);
 #endif
 
-    MG.lcd.print(F("Card UID:"));
-    go_dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size);
-    MG.lcd.println("\n");
+    PICC_DumpDetailsToGO(&(mfrc522.uid));
 
-    // Show some details of the PICC (that is: the tag/card)
-    Serial.print(F("Card UID:"));
-    dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size);
-    Serial.println();
-    Serial.print(F("PICC type: "));
-    MFRC522::PICC_Type piccType = mfrc522.PICC_GetType(mfrc522.uid.sak);
-    Serial.println(mfrc522.PICC_GetTypeName(piccType));
+    mfrc522.PICC_DumpDetailsToSerial(&(mfrc522.uid));
 
     theUidSize = mfrc522.uid.size;
     for (byte i = 0; i < mfrc522.uid.size; i++) {
@@ -1178,12 +1236,9 @@ void keuze0(){
     digitalWrite(LED_ACT_PIN, HIGH);
 #endif
 
-    MG.lcd.print(F("Card UID:"));
-    go_dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size);
-    MG.lcd.println("\n");
-    MG.lcd.println("----------------------\n");
+    PICC_DumpDetailsToGO(&(mfrc522.uid));
 
-    mfrc522.PICC_DumpToSerial(&(mfrc522.uid));
+    mfrc522.PICC_DumpDetailsToSerial(&(mfrc522.uid));
 
 #ifdef _LEDMIRROR_H_
     MG.led.off();
@@ -1191,6 +1246,8 @@ void keuze0(){
     digitalWrite(LED_ACT_PIN, LOW);
 #endif
   
+    waitForBack();
+
     Serial.println("0.Card info\n1.Read card \n2.Write to card \n3.Copy the data.");
 }
 
